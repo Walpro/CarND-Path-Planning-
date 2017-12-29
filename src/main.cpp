@@ -204,7 +204,7 @@ static double speed_control(double cmd_speed,double speed)
 
 	error = cmd_speed-speed;
 
-	cout<<"|| Error(t-1)= "<<old_error<<" || Error(t)= "<<error<<endl;
+	//cout<<"|| Error(t-1)= "<<old_error<<" || Error(t)= "<<error<<endl;
 
 	if(speed>MAX_SP)
 	{
@@ -250,7 +250,6 @@ static double keep_distance(double s, double mins,double speed)
 	}
 	old_error = error;
 
-	cout<<"sp ="<<sp<<"   mins ="<<mins<<endl;
 	return speed_control(sp,speed);
 
 }
@@ -517,11 +516,11 @@ int main() {
     	mov_speed = plan_sm(car_state);
     	spc_x = car_state.spx;
     	des_lane = car_state.des_lane;
-
+    	/*
 		cout<<"State="<<car_state.path<<"|| Car_lane= "<<car_state.lane<<", "<<car_state.des_lane<<"|| Speed= "<<car_state.speed<<endl;
     	cout<<"|| left= "<<car_state.sensors[0]<<"|| Center=" <<car_state.sensors[1]<<", "<<car_state.min_dst<<"|| Right= " <<car_state.sensors[2]<<endl;
     	cout<<"************************************************************************************************************************"<<endl;
-
+    	 */
         // Widely spaced points list
          vector<double> xpts;
          vector<double> ypts;
