@@ -15,7 +15,7 @@ using namespace std;
 // for convenience
 using json = nlohmann::json;
 
-#define MAX_SP  49.2
+#define MAX_SP  49
 using PATH_T = enum {KEEP_LANE,CHANGE_R, CHANGE_L };
 
 struct CAR_STATE_T{
@@ -213,11 +213,11 @@ static double speed_control(double cmd_speed,double speed)
 	else
 	{
 		// PD Controller
-		control = speed +0.2*(error)+0.4*(error-old_error);
+		control = speed +0.2*(error)+0.5*(error-old_error);
 		// saturate the control action to account for abrupt changes
-		if(abs(control - speed)>4)
+		if(abs(control - speed)>3.9)
 		{
-			control = speed + 4*abs(control-speed)/(control-speed);
+			control = speed + 3.9*abs(control-speed)/(control-speed);
 		}
 		control = min(MAX_SP,control);
 	}
@@ -267,7 +267,7 @@ static double plan_sm(CAR_STATE_T &car_state)
 	case KEEP_LANE:
 	{
 		// keep 50m distance to the closest car
-		mov_sp = keep_distance(45,car_state.min_dst,car_state.speed);
+		mov_sp = keep_distance(42,car_state.min_dst,car_state.speed);
 
 
 		// A car is detected in the car lane
@@ -306,7 +306,7 @@ static double plan_sm(CAR_STATE_T &car_state)
 		// Lane change is in progress
 		else if(change_cnt<100)
 		{
-			mov_sp = keep_distance(40,car_state.min_dst,car_state.speed);
+			mov_sp = keep_distance(35,car_state.min_dst,car_state.speed);
 			if(car_state.spx>30)
 			{
 				car_state.spx-=0.4;
@@ -337,7 +337,7 @@ static double plan_sm(CAR_STATE_T &car_state)
 			// Lane change is in progress
 			else if(change_cnt<100)
 			{
-				mov_sp = keep_distance(40,car_state.min_dst,car_state.speed);
+				mov_sp = keep_distance(35,car_state.min_dst,car_state.speed);
 				change_cnt ++;
 				if(car_state.spx>30)
 				{
@@ -496,7 +496,7 @@ int main() {
             		// Detect cars right of the car lane
             		else if((cs_d >car_d +4 -2)&&(cs_d<car_d+4 +2))
             		{
-            			if((cs_s - car_s)<42)
+            			if((cs_s - car_s)<45)
             			{
             				car_state.sensors[2] +=1;
             			}
@@ -504,7 +504,7 @@ int main() {
             		// Detect cars left of the car lane
             		else if((cs_d >car_d -4 -2)&&(cs_d<car_d-4 +2))
             		{
-            			if((cs_s - car_s)<42)
+            			if((cs_s - car_s)<45)
             			{
             				car_state.sensors[0] +=1;
             			}
