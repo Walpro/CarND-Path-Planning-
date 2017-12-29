@@ -15,6 +15,19 @@ using namespace std;
 // for convenience
 using json = nlohmann::json;
 
+#define MAX_SP  49.5
+using PATH_T = enum {KEEP_LANE,CHANGE_R, CHANGE_L };
+
+struct CAR_STATE_T{
+	PATH_T path;
+	int lane;
+	int des_lane;
+	int spx;
+	double speed;
+	int sensors[3];
+	double min_dst;
+};
+
 // For converting back and forth between radians and degrees.
 constexpr double pi() { return M_PI; }
 double deg2rad(double x) { return x * pi() / 180; }
@@ -164,6 +177,178 @@ vector<double> getXY(double s, double d, const vector<double> &maps_s, const vec
 
 }
 
+/**
+ * return the minimum of two variables.
+ */
+static double min(double a, double b)
+{
+	if(a<b)
+	{
+		return a;
+	}
+	else
+	{
+		return b;
+	}
+
+}
+
+/**
+ * Control smoothly the speed "speed" of the car using a PD controller.
+ */
+static double speed_control(double cmd_speed,double speed)
+{
+	static double old_error = cmd_speed-speed;
+	double control = 0;
+	double error = 0;
+
+	error = cmd_speed-speed;
+
+	cout<<"|| Error(t-1)= "<<old_error<<" || Error(t)= "<<error<<endl;
+
+	if(speed>MAX_SP)
+	{
+		control = MAX_SP;
+	}
+	else
+	{
+		// PD Controller
+		control = speed +0.2*(error)+0.4*(error-old_error);
+		// saturate the control action to account for abrupt changes
+		if(abs(control - speed)>4)
+		{
+			control = speed + 4*abs(control-speed)/(control-speed);
+		}
+		control = min(MAX_SP,control);
+	}
+	old_error = error;
+
+	return control;
+}
+
+/**
+ * Keep the desired distance "s" given the car speed "speed"
+ * and the distance "mins" to the closest car.
+ * A PD Controller is also here used.
+ */
+static double keep_distance(double s, double mins,double speed)
+{
+	static double old_error = s-mins;
+	double error = s-mins;
+	double sp;
+
+	// Max acceleration if the closest car is more far than the desired distance
+	if(mins>s)
+	{
+		sp = MAX_SP;
+	}
+	else{
+	//PD Controller
+	sp = mins - 0.08*abs(error) -1.7*abs(error-old_error);
+	// Speed saturation
+	sp = min(sp,MAX_SP);
+	}
+	old_error = error;
+
+	cout<<"sp ="<<sp<<"   mins ="<<mins<<endl;
+	return speed_control(sp,speed);
+
+}
+
+/**
+ * State machine for path planning decisions
+ */
+static double plan_sm(CAR_STATE_T &car_state)
+{
+	static double mov_sp;
+	static double change_cnt = 255; // change counter
+
+	switch(car_state.path)
+	{
+	case KEEP_LANE:
+	{
+		// keep 50m distance to the closest car
+		mov_sp = keep_distance(45,car_state.min_dst,car_state.speed);
+
+
+		// A car is detected in the car lane
+		if((car_state.sensors[1]>0)&&(car_state.min_dst<40)&&(car_state.min_dst>25)&&(car_state.speed>30))
+		{
+			// Change to left lane if no car is detected there
+			if((car_state.sensors[0] == 0)&&(car_state.lane >0) &&(change_cnt ==255))
+			{
+			change_cnt = 0;
+			car_state.path = CHANGE_L;
+			}
+			// Change to right lane if no car is detected there
+			else if((car_state.sensors[2] == 0)&&(car_state.lane <2) &&(change_cnt ==255))
+			{
+				change_cnt = 0;
+				car_state.path = CHANGE_R;
+			}
+		}
+		break;
+	}
+
+	case CHANGE_L:
+	{
+		// Accelerate and change lane
+		if(change_cnt <20)
+		{
+			//change lane
+			if(change_cnt==0)
+			{
+			car_state.des_lane =car_state.lane-1;
+			}
+			mov_sp = speed_control(min(car_state.speed +5,MAX_SP),car_state.speed);
+			car_state.spx = car_state.speed +5;
+			change_cnt++;
+		}
+		// Lane change is in progress
+		else if(change_cnt<100)
+		{
+			mov_sp = keep_distance(40,car_state.min_dst,car_state.speed);
+			change_cnt ++;
+		}
+		else{
+			car_state.spx = 30;
+			car_state.path = KEEP_LANE;
+			change_cnt = 255;
+		}
+		break;
+	}
+	case CHANGE_R:
+		{
+			// Accelerate and change lane
+			if(change_cnt < 20)
+			{
+				//change lane
+				if(change_cnt == 0)
+				{
+				car_state.des_lane =car_state.lane+1;
+				}
+				mov_sp = speed_control(min(car_state.speed +5,MAX_SP),car_state.speed);
+				car_state.spx =  car_state.speed +5;
+				change_cnt++;
+			}
+			// Lane change is in progress
+			else if(change_cnt<100)
+			{
+				mov_sp = keep_distance(40,car_state.min_dst,car_state.speed);
+				change_cnt ++;
+			}
+			else{
+				car_state.spx = 30;
+				car_state.path = KEEP_LANE;
+				change_cnt = 255;
+			}
+		}
+		break;
+
+	}
+	return mov_sp;
+}
+
 int main() {
   uWS::Hub h;
 
@@ -247,35 +432,115 @@ int main() {
 
           	// TODO: define a path made up of (x,y) points that the car will visit sequentially every .02 seconds
 
-            unsigned char des_lane = 1; // desired car lane
-            double des_speed = 48.0; 	    // desired speed miles/hour
+          	//cout<<"Others Cars : "<<sensor_fusion<<endl;
+
+            static unsigned short des_lane = 1; // desired car lane
+            static double des_speed = MAX_SP;
+            static double mov_speed = 0;// desired speed miles/hour
+            static double speed_timer = 0;
+
+            static CAR_STATE_T car_state;
+
+            static double spc_x = 30;
+            static double center_speed = 0;
+            double min_s = 100;
+            double min_sp = 50;
+            static int start = 0;
+            CAR_STATE_T CAR_STATE;
 
           	// Previous path size
-          	 int p_path_size = previous_path_x.size();
+            int p_path_size = previous_path_x.size();
 
-          	// Widely spaced points list
-          	vector<double> xpts;
-          	vector<double> ypts;
 
-          	// desired car points start at last car position
-          	double des_x = car_x;
-          	double des_y = car_y;
-          	double des_yaw = deg2rad(car_yaw);
+            // computing car actual lane
+            car_state.lane = car_d /4;
 
-          	// if the previous path continuous is empty
-          	if(p_path_size < 2)
-          	{
-          		// add the tangent points to the trajectory
-          		double tg_carx  = car_x - cos(car_yaw);
-          		double tg_cary  = car_y - sin(car_yaw);
+            // Variables initialization
+            car_state.speed = car_speed;
+            car_state.min_dst = 100;
+            car_state.sensors[0] = 0;
+            car_state.sensors[1] = 0;
+            car_state.sensors[2] = 0;
+            // detecting the car from the sensor fusion
+            for(int i=0;i<sensor_fusion.size();i++)
+            {
+            	double cs_s = sensor_fusion[i][5];
+            	double cs_d = sensor_fusion[i][6];
+            	double cs_vx = sensor_fusion[i][3];
+				double cs_vy = sensor_fusion[i][4];
+            	double cs_sp = sqrt(cs_vx * cs_vx + cs_vy*cs_vy);
 
-          		cout<< "p_path_size < 2"<<endl;
+            	/* Predicting the position of the car in the future */
+            	cs_s += (double)p_path_size*0.005*cs_sp;
 
-          		xpts.push_back(tg_carx);
-          		xpts.push_back(car_x);
+            	// Car in front of the car and in a 100m distance
+            	if(((cs_s+9)>car_s) && (cs_s - car_s<100))
+            	{
+            		// Detect car in the car lane
+            		if((cs_d>car_d -2)&& (cs_d<car_d +2))
+            		{
+            			if((cs_s-car_s) < car_state.min_dst)
+            			{
+            				car_state.min_dst = cs_s-car_s;
+            				min_sp = cs_sp;
+            			}
+            			car_state.sensors[1] +=1;
+            		}
+            		// Detect cars right of the car lane
+            		else if((cs_d >car_d +4 -2)&&(cs_d<car_d+4 +2))
+            		{
+            			if((cs_s - car_s)<40)
+            			{
+            				car_state.sensors[2] +=1;
+            			}
+            		}
+            		// Detect cars left of the car lane
+            		else if((cs_d >car_d -4 -2)&&(cs_d<car_d-4 +2))
+            		{
+            			if((cs_s - car_s)<40)
+            			{
+            				car_state.sensors[0] +=1;
+            			}
+            		}
+            	}
 
-          		ypts.push_back(tg_cary);
-          		ypts.push_back(car_y);
+            }
+        // Initialize the car SM variable for the first run
+    	if(start == 0)
+    	{
+    		car_state.path = KEEP_LANE;
+    		car_state.des_lane = car_state.lane;
+    		car_state.spx = 40;
+    		start = 1;
+    	}
+
+    	mov_speed = plan_sm(car_state);
+    	spc_x = car_state.spx;
+    	des_lane = car_state.des_lane;
+
+		cout<<"State="<<car_state.path<<"|| Car_lane= "<<car_state.lane<<", "<<car_state.des_lane<<"|| Speed= "<<car_state.speed<<endl;
+    	cout<<"|| left= "<<car_state.sensors[0]<<"|| Center=" <<car_state.sensors[1]<<", "<<car_state.min_dst<<"|| Right= " <<car_state.sensors[2]<<endl;
+    	cout<<"************************************************************************************************************************"<<endl;
+
+        // Widely spaced points list
+         vector<double> xpts;
+         vector<double> ypts;
+
+         // desired car points start at last car position
+         double des_x = car_x;
+         double des_y = car_y;
+         double des_yaw = deg2rad(car_yaw);
+
+         // if the previous path continuous is empty
+         if(p_path_size < 2)
+         {
+        	 // add the tangent points to the trajectory
+        	 double tg_carx  = car_x - cos(car_yaw);
+        	 double tg_cary  = car_y - sin(car_yaw);
+        	 xpts.push_back(tg_carx);
+        	 xpts.push_back(car_x);
+        	 ypts.push_back(tg_cary);
+        	 ypts.push_back(car_y);
           	}
           	else
           	{
@@ -294,7 +559,7 @@ int main() {
           	}
 
           	// adding equally spaced points:
-          	double spc_x = 40.0;
+
           	vector<double> next_pt1 = getXY(car_s+ spc_x, 2+ 4 * des_lane , map_waypoints_s, map_waypoints_x, map_waypoints_y);
           	vector<double> next_pt2 = getXY(car_s+ 2*spc_x, 2+ 4 * des_lane , map_waypoints_s, map_waypoints_x, map_waypoints_y);
           	vector<double> next_pt3 = getXY(car_s+ 3*spc_x, 2+ 4 * des_lane , map_waypoints_s, map_waypoints_x, map_waypoints_y);
@@ -337,13 +602,13 @@ int main() {
             double spc_y = spl(spc_x);
             double spc_dis = sqrt(spc_x*spc_x + spc_y*spc_y);
             double add_x = 0;
+            // converting form miles per hour to meter per second.
             double MPH_TO_MPS = 1609.344/(60*60);
 
 
-            cout<< "P_path size: "<<p_path_size<<endl;
             for(int i=0; i<= 50-p_path_size;i++)
             {
-            	double N = spc_dis/ (0.02 * des_speed/MPH_TO_MPS);
+            	double N = spc_dis/ (0.02 * mov_speed*MPH_TO_MPS);
             	double point_x = add_x + spc_x/N;
             	double point_y = spl(point_x);
 
@@ -356,26 +621,12 @@ int main() {
             	point_x = des_x1*cos(des_yaw) - des_y1*sin(des_yaw);
             	point_y = des_x1*sin(des_yaw) + des_y1*cos(des_yaw);
 
-            	point_x += des_x1;
-            	point_y += des_y1;
+            	point_x += des_x;
+            	point_y += des_y;
 
             	next_x_vals.push_back(point_x);
             	next_y_vals.push_back(point_y);
             }
-
-            cout<<"next_x_vals = ";
-            for (int i=0;i<next_x_vals.size();i++)
-            {
-            cout<<next_x_vals[i]<<"| ";
-            }
-            cout<<endl;
-            cout<<"next_y_vals = ";
-            for (int i=0;i<next_x_vals.size();i++)
-            {
-            	cout<<next_y_vals[i]<<"| ";
-            }
-            cout<<endl;
-
             // END TODO
 
 
