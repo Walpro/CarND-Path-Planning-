@@ -15,7 +15,7 @@ using namespace std;
 // for convenience
 using json = nlohmann::json;
 
-#define MAX_SP  49.5
+#define MAX_SP  49.2
 using PATH_T = enum {KEEP_LANE,CHANGE_R, CHANGE_L };
 
 struct CAR_STATE_T{
@@ -271,7 +271,7 @@ static double plan_sm(CAR_STATE_T &car_state)
 
 
 		// A car is detected in the car lane
-		if((car_state.sensors[1]>0)&&(car_state.min_dst<40)&&(car_state.min_dst>25)&&(car_state.speed>30))
+		if((car_state.sensors[1]>0)&&(car_state.min_dst<42)&&(car_state.min_dst>25)&&(car_state.speed>34))
 		{
 			// Change to left lane if no car is detected there
 			if((car_state.sensors[0] == 0)&&(car_state.lane >0) &&(change_cnt ==255))
@@ -300,13 +300,17 @@ static double plan_sm(CAR_STATE_T &car_state)
 			car_state.des_lane =car_state.lane-1;
 			}
 			mov_sp = speed_control(min(car_state.speed +5,MAX_SP),car_state.speed);
-			car_state.spx = car_state.speed +5;
+			car_state.spx = car_state.speed+8;
 			change_cnt++;
 		}
 		// Lane change is in progress
 		else if(change_cnt<100)
 		{
 			mov_sp = keep_distance(40,car_state.min_dst,car_state.speed);
+			if(car_state.spx>30)
+			{
+				car_state.spx-=0.4;
+			}
 			change_cnt ++;
 		}
 		else{
@@ -327,7 +331,7 @@ static double plan_sm(CAR_STATE_T &car_state)
 				car_state.des_lane =car_state.lane+1;
 				}
 				mov_sp = speed_control(min(car_state.speed +5,MAX_SP),car_state.speed);
-				car_state.spx =  car_state.speed +5;
+				car_state.spx =car_state.speed + 8;
 				change_cnt++;
 			}
 			// Lane change is in progress
@@ -335,6 +339,10 @@ static double plan_sm(CAR_STATE_T &car_state)
 			{
 				mov_sp = keep_distance(40,car_state.min_dst,car_state.speed);
 				change_cnt ++;
+				if(car_state.spx>30)
+				{
+					car_state.spx-=0.4;
+				}
 			}
 			else{
 				car_state.spx = 30;
@@ -488,7 +496,7 @@ int main() {
             		// Detect cars right of the car lane
             		else if((cs_d >car_d +4 -2)&&(cs_d<car_d+4 +2))
             		{
-            			if((cs_s - car_s)<40)
+            			if((cs_s - car_s)<42)
             			{
             				car_state.sensors[2] +=1;
             			}
@@ -496,7 +504,7 @@ int main() {
             		// Detect cars left of the car lane
             		else if((cs_d >car_d -4 -2)&&(cs_d<car_d-4 +2))
             		{
-            			if((cs_s - car_s)<40)
+            			if((cs_s - car_s)<42)
             			{
             				car_state.sensors[0] +=1;
             			}
@@ -562,15 +570,21 @@ int main() {
           	vector<double> next_pt1 = getXY(car_s+ spc_x, 2+ 4 * des_lane , map_waypoints_s, map_waypoints_x, map_waypoints_y);
           	vector<double> next_pt2 = getXY(car_s+ 2*spc_x, 2+ 4 * des_lane , map_waypoints_s, map_waypoints_x, map_waypoints_y);
           	vector<double> next_pt3 = getXY(car_s+ 3*spc_x, 2+ 4 * des_lane , map_waypoints_s, map_waypoints_x, map_waypoints_y);
-
+          	vector<double> next_pt4 = getXY(car_s+ 4*spc_x, 2+ 4 * des_lane , map_waypoints_s, map_waypoints_x, map_waypoints_y);
+          	//vector<double> next_pt5 = getXY(car_s+ 5*spc_x, 2+ 4 * des_lane , map_waypoints_s, map_waypoints_x, map_waypoints_y);
 
           	xpts.push_back(next_pt1[0]);
           	xpts.push_back(next_pt2[0]);
           	xpts.push_back(next_pt3[0]);
+          	xpts.push_back(next_pt4[0]);
+          	//xpts.push_back(next_pt5[0]);
 
           	ypts.push_back(next_pt1[1]);
           	ypts.push_back(next_pt2[1]);
           	ypts.push_back(next_pt3[1]);
+          	ypts.push_back(next_pt4[1]);
+          	//ypts.push_back(next_pt5[1]);
+
 
 
 
